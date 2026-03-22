@@ -1093,6 +1093,25 @@ def list_reports(
     )
 
 
+@app.delete("/api/reports/weekly/{report_id}")
+def delete_report(
+    report_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Session = Depends(get_db),
+):
+    report = (
+        db.query(WeeklyReport)
+        .filter(WeeklyReport.id == report_id, WeeklyReport.owner_id == current_user.id)
+        .first()
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    db.delete(report)
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/api/notifications/test-email")
 def test_email(
     current_user: Annotated[User, Depends(get_current_user)],

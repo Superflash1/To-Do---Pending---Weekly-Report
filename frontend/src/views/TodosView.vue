@@ -370,7 +370,7 @@ onMounted(load)
 
 <style scoped>
 .todo-page {
-  height: calc(100vh - 140px);
+  height: calc(100vh - 146px);
 }
 
 .left-col,
@@ -381,8 +381,9 @@ onMounted(load)
 }
 
 .todo-list {
-  max-height: calc(100vh - 250px);
+  max-height: calc(100vh - 252px);
   overflow: auto;
+  padding-right: 4px;
 }
 
 .header-row {
@@ -395,22 +396,24 @@ onMounted(load)
   display: flex;
   gap: 10px;
   padding: 10px 8px;
-  border-radius: 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
   cursor: pointer;
 }
 
 .todo-item:hover,
 .todo-item.active {
-  background: #f5f7fa;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: var(--mx-border);
 }
 
 .status-icon {
   margin-top: 2px;
-  color: #909399;
+  color: var(--mx-text-muted);
 }
 
 .status-icon.done {
-  color: #67c23a;
+  color: var(--mx-success);
 }
 
 .todo-meta {
@@ -425,7 +428,7 @@ onMounted(load)
 
 .todo-title.done {
   text-decoration: line-through;
-  color: #909399;
+  color: var(--mx-text-muted);
 }
 
 .todo-sub {
@@ -438,13 +441,13 @@ onMounted(load)
 .group-title {
   width: 100%;
   font-size: 13px;
-  color: #606266;
+  color: var(--mx-text-normal);
   font-weight: 600;
   margin: 12px 0 6px;
   padding: 6px 8px;
-  border: none;
-  background: #f8f9fb;
-  border-radius: 8px;
+  border: 1px solid var(--mx-border);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -465,8 +468,8 @@ onMounted(load)
   min-width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: #ecf5ff;
-  color: #409eff;
+  background: rgba(120, 120, 120, 0.22);
+  color: var(--mx-text-normal);
   font-size: 12px;
   line-height: 20px;
   text-align: center;
@@ -475,12 +478,12 @@ onMounted(load)
 
 .group-toggle {
   font-size: 12px;
-  color: #909399;
+  color: var(--mx-text-muted);
 }
 
 .due-date {
   font-size: 12px;
-  color: #909399;
+  color: var(--mx-text-muted);
 }
 
 .tag-editor {
@@ -489,9 +492,5 @@ onMounted(load)
   gap: 8px;
   align-items: center;
   width: 100%;
-}
-
-.tag-input {
-  width: 240px;
 }
 </style>

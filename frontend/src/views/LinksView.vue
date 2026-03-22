@@ -1,142 +1,156 @@
 <template>
-  <el-card>
-    <template #header>资源池</template>
-    <el-form>
-      <el-form-item label="批量链接（每行一个）">
-        <el-input type="textarea" v-model="urlText" :rows="4" />
-      </el-form-item>
-      <el-space>
-        <el-button type="primary" @click="submitBatch">批量添加</el-button>
-        <el-button @click="load">刷新</el-button>
-        <el-switch
-          v-model="showArchived"
-          active-text="显示归档"
-          inactive-text="隐藏归档"
-          @change="load"
-        />
-      </el-space>
-    </el-form>
-  </el-card>
+  <div class="page">
+    <el-card>
+      <h2 class="page-title">待读池</h2>
+      <p class="page-subtitle">收集有价值输入，把外部灵感转成可执行线索</p>
+    </el-card>
 
-  <el-card style="margin-top: 16px">
-    <template #header>标签管理</template>
-    <el-form inline style="margin-bottom: 12px">
-      <el-form-item label="新增标签">
-        <el-input v-model="newTag.name" placeholder="标签名" style="width: 180px" />
-      </el-form-item>
-      <el-form-item>
-        <el-input v-model="newTag.description" placeholder="说明(可选)" style="width: 260px" />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="addTag">新增标签</el-button>
-      </el-form-item>
-    </el-form>
-    <el-table :data="categories" stripe>
-      <el-table-column prop="name" label="标签名" min-width="220" />
-      <el-table-column prop="description" label="说明" min-width="260" />
-      <el-table-column label="操作" width="240">
-        <template #default="scope">
-          <el-space>
-            <el-button size="small" @click="openEditTag(scope.row)">编辑</el-button>
-            <el-popconfirm title="删除后会保留链接，但清空它们的标签，确认？" @confirm="removeTag(scope.row.id)">
-              <template #reference>
-                <el-button size="small" type="danger" plain>删除标签</el-button>
-              </template>
-            </el-popconfirm>
-          </el-space>
-        </template>
-      </el-table-column>
-    </el-table>
-  </el-card>
+    <el-card>
+      <template #header>
+        <div class="card-title">批量导入</div>
+      </template>
+      <el-form>
+        <el-form-item label="批量链接（每行一个）">
+          <el-input type="textarea" v-model="urlText" :rows="4" />
+        </el-form-item>
+        <el-space wrap>
+          <el-button type="primary" @click="submitBatch">批量添加</el-button>
+          <el-button @click="load">刷新</el-button>
+          <el-switch
+            v-model="showArchived"
+            active-text="显示归档"
+            inactive-text="隐藏归档"
+            @change="load"
+          />
+        </el-space>
+      </el-form>
+    </el-card>
 
-  <el-card style="margin-top: 16px" v-for="group in groupedLinks" :key="group.tagName">
-    <template #header>{{ group.tagName }}</template>
-    <el-table :data="group.items" stripe>
-      <el-table-column prop="title" label="标题" min-width="220" />
-      <el-table-column label="链接" min-width="280">
-        <template #default="scope">
-          <a :href="scope.row.url" target="_blank" rel="noreferrer">{{ scope.row.url }}</a>
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="120">
-        <template #default="scope">
-          <el-select
-            :model-value="scope.row.status"
-            size="small"
-            style="width: 100px"
-            @change="(val) => patchLink(scope.row.id, { status: val })"
-          >
-            <el-option value="unread" label="未读" />
-            <el-option value="read" label="已读" />
-            <el-option value="ignored" label="忽略" />
-          </el-select>
-        </template>
-      </el-table-column>
-      <el-table-column label="标签" width="180">
-        <template #default="scope">
-          <el-select
-            :model-value="scope.row.category_id"
-            size="small"
-            style="width: 160px"
-            placeholder="选择标签"
-            @change="(val) => patchLink(scope.row.id, { category_id: val })"
-          >
-            <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-          </el-select>
-        </template>
-      </el-table-column>
-      <el-table-column label="来源" width="100">
-        <template #default="scope">
-          <el-tag size="small" :type="scope.row.classification_source === 'manual' ? 'success' : 'info'">
-            {{ scope.row.classification_source === 'manual' ? '人工' : 'AI' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="320">
-        <template #default="scope">
-          <el-space>
-            <el-button
-              v-if="!scope.row.category_name || scope.row.category_name === '未分类' || scope.row.category_name === '未打标签'"
+    <el-card>
+      <template #header>
+        <div class="card-title">标签管理</div>
+      </template>
+      <p class="section-tip">标签用于组织链接分组，删除标签不会删除链接本身。</p>
+      <el-form inline style="margin-bottom: 12px">
+        <el-form-item label="新增标签">
+          <el-input v-model="newTag.name" placeholder="标签名" style="width: 180px" />
+        </el-form-item>
+        <el-form-item>
+          <el-input v-model="newTag.description" placeholder="说明(可选)" style="width: 260px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="addTag">新增标签</el-button>
+        </el-form-item>
+      </el-form>
+      <el-table :data="categories" stripe>
+        <el-table-column prop="name" label="标签名" min-width="220" />
+        <el-table-column prop="description" label="说明" min-width="260" />
+        <el-table-column label="操作" width="240">
+          <template #default="scope">
+            <el-space>
+              <el-button size="small" @click="openEditTag(scope.row)">编辑</el-button>
+              <el-popconfirm title="删除后会保留链接，但清空它们的标签，确认？" @confirm="removeTag(scope.row.id)">
+                <template #reference>
+                  <el-button size="small" type="danger" plain>删除标签</el-button>
+                </template>
+              </el-popconfirm>
+            </el-space>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-card v-for="group in groupedLinks" :key="group.tagName">
+      <template #header>
+        <div class="card-title">{{ group.tagName }}</div>
+      </template>
+      <el-table :data="group.items" stripe>
+        <el-table-column prop="title" label="标题" min-width="220" />
+        <el-table-column label="链接" min-width="280">
+          <template #default="scope">
+            <a :href="scope.row.url" target="_blank" rel="noreferrer">{{ scope.row.url }}</a>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="scope">
+            <el-select
+              :model-value="scope.row.status"
               size="small"
-              type="primary"
-              plain
-              @click="reclassifyLink(scope.row.id)"
+              style="width: 100px"
+              @change="(val) => patchLink(scope.row.id, { status: val })"
             >
-              重新分类
-            </el-button>
-            <el-button
+              <el-option value="unread" label="未读" />
+              <el-option value="read" label="已读" />
+              <el-option value="ignored" label="忽略" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="标签" width="180">
+          <template #default="scope">
+            <el-select
+              :model-value="scope.row.category_id"
               size="small"
-              :type="scope.row.is_archived ? 'warning' : 'info'"
-              plain
-              @click="toggleArchive(scope.row)"
+              style="width: 160px"
+              placeholder="选择标签"
+              @change="(val) => patchLink(scope.row.id, { category_id: val })"
             >
-              {{ scope.row.is_archived ? '取消归档' : '归档' }}
-            </el-button>
-            <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(scope.row.id)">
-              <template #reference>
-                <el-button size="small" type="danger">删除</el-button>
-              </template>
-            </el-popconfirm>
-          </el-space>
-        </template>
-      </el-table-column>
-    </el-table>
-  </el-card>
+              <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="100">
+          <template #default="scope">
+            <el-tag size="small" :type="scope.row.classification_source === 'manual' ? 'success' : 'info'">
+              {{ scope.row.classification_source === 'manual' ? '人工' : 'AI' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="320">
+          <template #default="scope">
+            <el-space>
+              <el-button
+                v-if="!scope.row.category_name || scope.row.category_name === '未分类' || scope.row.category_name === '未打标签'"
+                size="small"
+                type="primary"
+                plain
+                @click="reclassifyLink(scope.row.id)"
+              >
+                重新分类
+              </el-button>
+              <el-button
+                size="small"
+                :type="scope.row.is_archived ? 'warning' : 'info'"
+                plain
+                @click="toggleArchive(scope.row)"
+              >
+                {{ scope.row.is_archived ? '取消归档' : '归档' }}
+              </el-button>
+              <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(scope.row.id)">
+                <template #reference>
+                  <el-button size="small" type="danger">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </el-space>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
-  <el-dialog v-model="tagDialogVisible" title="编辑标签" width="520px">
-    <el-form label-width="90px">
-      <el-form-item label="标签名">
-        <el-input v-model="editingTag.name" />
-      </el-form-item>
-      <el-form-item label="说明">
-        <el-input v-model="editingTag.description" type="textarea" :rows="3" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="tagDialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="saveTag">保存</el-button>
-    </template>
-  </el-dialog>
+    <el-dialog v-model="tagDialogVisible" title="编辑标签" width="520px">
+      <el-form label-width="90px">
+        <el-form-item label="标签名">
+          <el-input v-model="editingTag.name" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="editingTag.description" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="tagDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveTag">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -288,3 +302,19 @@ onMounted(async () => {
   await load()
 })
 </script>
+
+<style scoped>
+.section-tip {
+  margin: 0 0 12px;
+  color: var(--mx-text-muted);
+  font-size: 13px;
+}
+
+:deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+
+:deep(.el-table .cell) {
+  line-height: 1.6;
+}
+</style>

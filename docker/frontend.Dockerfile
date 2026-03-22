@@ -1,9 +1,11 @@
 FROM node:20-alpine
 
+ENV NODE_ENV=development
+
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+RUN npm ci
 
 COPY frontend /app
 

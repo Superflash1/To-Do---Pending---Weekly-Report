@@ -74,11 +74,31 @@ uv python install 3.11
 
 if errorlevel 1 (
 
-  echo [ERROR] Python 3.11 安装失败
+  echo [WARN] 默认位置安装失败，尝试使用项目本地 UV_PYTHON_INSTALL_DIR 重试...
 
-  pause
+  if not exist "%~dp0.tools" mkdir "%~dp0.tools"
 
-  exit /b 1
+  if not exist "%~dp0.tools\uv-python" mkdir "%~dp0.tools\uv-python"
+
+  set "UV_PYTHON_INSTALL_DIR=%~dp0.tools\uv-python"
+
+  uv python install 3.11
+
+  if errorlevel 1 (
+
+    echo [ERROR] Python 3.11 安装失败
+
+    echo [HINT] 可能是 uv 旧安装目录中的链接损坏（reparse point）。
+
+    echo [HINT] 请手动删除以下目录后重试：
+
+    echo        %LOCALAPPDATA%\uv\python\3.11
+
+    pause
+
+    exit /b 1
+
+  )
 
 )
 

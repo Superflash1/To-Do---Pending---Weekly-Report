@@ -1,66 +1,60 @@
-# 本系统 Docker 运行说明（SQLite 版本）
+# Docker 开发环境说明（SQLite）
 
-按你的要求，Docker 方案已改为 **不依赖 PostgreSQL**，统一使用 SQLite。
+当前 Docker 配置已按**开发模式**优化，支持前后端热更新，并保持你现有的 `docker compose -f docker/docker-compose.yml ...` 调用方式。
 
-## 目录结构
+## 文件说明
 
-- `docker/docker-compose.yml`
-- `docker/backend.Dockerfile`
-- `docker/frontend.Dockerfile`
-- `docker/README.md`（本说明）
+- `docker/docker-compose.yml`：开发环境编排（热更新、健康检查、依赖顺序）
+- `docker/backend.Dockerfile`：后端开发镜像
+- `docker/frontend.Dockerfile`：前端开发镜像
+- `.env.example`：环境变量模板
 
 ## 启动前准备
 
 1. 安装并启动 Docker Desktop。
-2. 在项目根目录准备环境变量文件：
-   - 如果没有 `.env`，请从 `.env.example` 复制一份：
-     - Windows PowerShell: `Copy-Item .env.example .env`
-3. 确认 `.env` 中关键项：
+2. 在项目根目录准备 `.env`：
+   - PowerShell：`Copy-Item .env.example .env`
+3. 确认关键变量：
    - `DATABASE_URL=sqlite:///./data/brain_tool.db`
    - `VITE_API_BASE_URL=http://localhost:8000`
-4. 确保项目根目录存在 `data/`（compose 已挂载到后端容器）。
+4. 确保项目根目录存在 `data/` 目录。
 
-## 运行方式
+## 启动与停止
 
-> 以下命令均在 **项目根目录** 执行。
+> 以下命令均在项目根目录执行。
 
-### 1) 首次启动（构建 + 后台运行）
+### 首次启动 / 重建启动
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build -d
 ```
 
-### 2) 查看运行状态
+### 查看状态
 
 ```bash
 docker compose -f docker/docker-compose.yml ps
 ```
 
-### 3) 查看日志
+### 查看日志
 
 ```bash
-# 全部服务日志
 docker compose -f docker/docker-compose.yml logs -f --tail=200
-
-# 后端日志
 docker compose -f docker/docker-compose.yml logs -f backend
-
-# 前端日志
 docker compose -f docker/docker-compose.yml logs -f frontend
 ```
 
-### 4) 停止服务
+### 停止
 
 ```bash
 docker compose -f docker/docker-compose.yml down
 ```
 
-### 5) 强制重建镜像
+## 开发模式特性
 
-```bash
-docker compose -f docker/docker-compose.yml build --no-cache
-docker compose -f docker/docker-compose.yml up -d
-```
+- 后端挂载 `../backend:/app`，代码变更可立即生效（`uvicorn --reload`）
+- 前端挂载 `../frontend:/app`，Vite 热更新可用
+- 前端依赖后端健康检查（`/health`）通过后再启动
+- 通过匿名卷保留容器内 `node_modules`，避免主机环境污染
 
 ## 访问地址
 
@@ -69,26 +63,18 @@ docker compose -f docker/docker-compose.yml up -d
 - Swagger：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/health`
 
-## SQLite 数据位置
+## 常见问题
 
-- 宿主机：`./data/brain_tool.db`
-- 容器内：`/app/data/brain_tool.db`
+### 前端能打开但接口报错
 
-## 常见问题排查
+- 检查 `.env` 中 `VITE_API_BASE_URL` 是否为 `http://localhost:8000`
+- 查看后端日志是否有异常
 
-### 1. 前端启动了但无法请求后端
-- 检查 `.env` 的 `VITE_API_BASE_URL` 是否为 `http://localhost:8000`
-- 查看后端日志是否报错
+### 数据库文件未生成
 
-### 2. 数据库文件未创建
-- 检查 `.env` 中 `DATABASE_URL` 是否为 `sqlite:///./data/brain_tool.db`
-- 检查项目根目录 `data/` 是否存在且可写
-- 查看后端启动日志是否有建表错误
+- 检查 `DATABASE_URL` 是否为 `sqlite:///./data/brain_tool.db`
+- 检查 `data/` 目录是否可写
 
-### 3. 邮件发送失败
-- 检查 SMTP 参数是否正确（建议使用邮箱专用授权码）
-- 在系统设置页先测试 SMTP
+### Windows 下前端热更新不稳定
 
-### 4. 链接分类不生效
-- 检查 LLM API Key / Base URL / Model 配置
-- 未配置 LLM 时系统会降级到默认分类
+已在 compose 中启用 `CHOKIDAR_USEPOLLING=true`，如仍异常可重启前端容器。

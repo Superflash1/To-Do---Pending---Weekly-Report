@@ -1,31 +1,50 @@
-version: '3.9'
-
 services:
   backend:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
-    container_name: second-brain-backend
+    container_name: minddock-backend
     env_file:
       - ../.env
     ports:
       - "8000:8000"
     volumes:
       - ../backend:/app
-      - ../data/uploads:/app/uploads
       - ../data:/app/data
+      - ../data/uploads:/app/uploads
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   frontend:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    container_name: second-brain-frontend
+    container_name: minddock-frontend
     env_file:
       - ../.env
     ports:
       - "5173:5173"
-    depends_on:
-      - backend
+    environment:
+      - CHOKIDAR_USEPOLLING=true
     volumes:
       - ../frontend:/app
       - /app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
