@@ -58,6 +58,7 @@
           <div class="header-row">
             <span>任务详情</span>
             <el-space size="small">
+              <el-button type="danger" plain size="small" @click="confirmDeleteTodo">删除待办</el-button>
               <el-text size="small" :type="saveStatusType">{{ saveStatusText }}</el-text>
               <el-text v-if="lastSavedAt" size="small" type="info">{{ lastSavedAt }}</el-text>
             </el-space>
@@ -122,7 +123,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleCheckFilled } from '@element-plus/icons-vue'
 import api from '../api'
 import RichTextEditor from '../components/RichTextEditor.vue'
@@ -300,6 +301,43 @@ const toggleDone = async (todo: Todo) => {
   await load()
   if (selected.value?.id === todo.id) {
     await selectTodo(todo.id)
+  }
+}
+
+const confirmDeleteTodo = async () => {
+  if (!selected.value) {
+    ElMessage.warning('请先选择要删除的待办')
+    return
+  }
+
+  const todoId = selected.value.id
+  const todoTitle = selected.value.title || `待办 #${todoId}`
+
+  try {
+    await ElMessageBox.confirm(`确认永久删除“${todoTitle}”？该操作不可恢复。`, '删除待办', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+
+  await api.delete(`/api/todos/${todoId}`)
+  ElMessage.success('待办已删除')
+
+  const remaining = todos.value.filter((t) => t.id !== todoId)
+  selected.value = null
+  contentMarkdown.value = ''
+  contentRichtext.value = ''
+  selectedTag.value = '未分类'
+  saveState.value = 'idle'
+  lastSavedAt.value = ''
+
+  await load()
+  if (remaining.length > 0) {
+    await selectTodo(remaining[0].id)
   }
 }
 

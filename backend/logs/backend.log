@@ -1,0 +1,9 @@
+2026-03-23 15:16:39,939 | INFO | apscheduler.scheduler | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 15:16:39,940 | INFO | apscheduler.scheduler | Added job "daily_notification_job" to job store "default"
+2026-03-23 15:16:39,941 | INFO | apscheduler.scheduler | Scheduler started
+2026-03-23 15:17:30,745 | INFO | apscheduler.scheduler | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 15:17:30,746 | INFO | apscheduler.scheduler | Added job "daily_notification_job" to job store "default"
+2026-03-23 15:17:30,746 | INFO | apscheduler.scheduler | Scheduler started
+2026-03-23 15:17:34,191 | INFO | apscheduler.scheduler | Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 15:17:34,196 | INFO | apscheduler.scheduler | Added job "daily_notification_job" to job store "default"
+2026-03-23 15:17:34,196 | INFO | apscheduler.scheduler | Scheduler started

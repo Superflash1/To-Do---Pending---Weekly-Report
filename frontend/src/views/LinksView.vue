@@ -7,7 +7,7 @@
         </template>
         <el-form>
           <el-form-item label="批量链接（每行一个）">
-            <el-input type="textarea" v-model="urlText" :rows="4" />
+            <el-input v-model="urlText" type="textarea" :rows="4" />
           </el-form-item>
           <el-space wrap>
             <el-button type="primary" @click="submitBatch">批量添加</el-button>
@@ -67,68 +67,104 @@
     </section>
 
     <section class="right-panel">
-      <el-card v-for="group in groupedLinks" :key="group.tagName">
+      <el-card>
         <template #header>
           <div class="group-header">
-            <div class="card-title">{{ group.tagName }}</div>
-            <el-tag type="info" effect="plain">{{ group.items.length }} 条</el-tag>
+            <div class="card-title">待读池（按标签）</div>
+            <el-tag type="info" effect="plain">{{ links.length }} 条</el-tag>
           </div>
         </template>
 
-        <div class="link-card-list">
-          <article v-for="item in group.items" :key="item.id" class="link-card-item">
-            <div class="link-card-main">
-              <el-checkbox
-                :model-value="selectedLinkIds.includes(item.id)"
-                @change="(val) => toggleLinkSelected(item.id, val as boolean)"
-              />
-              <div class="link-content">
-                <div class="title-line">{{ item.title || '未命名链接' }}</div>
-                <a class="url-line" :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
-                <div class="meta-line">
-                  <el-tag size="small" :type="classificationSourceTagType(item.classification_source)">
-                    {{ classificationSourceLabel(item.classification_source) }}
-                  </el-tag>
-                  <el-select
-                    :model-value="item.status"
-                    size="small"
-                    style="width: 96px"
-                    @change="(val) => patchLink(item.id, { status: val })"
-                  >
-                    <el-option value="unread" label="未读" />
-                    <el-option value="read" label="已读" />
-                    <el-option value="ignored" label="忽略" />
-                  </el-select>
-                  <el-select
-                    :model-value="item.category_id"
-                    size="small"
-                    style="width: 140px"
-                    placeholder="标签"
-                    @change="(val) => patchLink(item.id, { category_id: val })"
-                  >
-                    <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-                  </el-select>
-                </div>
-              </div>
-            </div>
+        <div class="tag-list-header">点击标签行可展开/折叠该标签下链接</div>
 
-            <div class="op-cell">
-              <el-button size="small" text type="primary" @click="reclassifyLink(item.id)">重分</el-button>
-              <el-button
-                size="small"
-                text
-                :type="item.is_archived ? 'warning' : 'info'"
-                @click="toggleArchive(item)"
-              >
-                {{ item.is_archived ? '取消归档' : '归档' }}
-              </el-button>
-              <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(item.id)">
-                <template #reference>
-                  <el-button size="small" text type="danger">删除</el-button>
-                </template>
-              </el-popconfirm>
+        <div class="tag-group-list">
+          <section v-for="group in groupedLinks" :key="group.tagName" class="tag-group-item">
+            <button class="tag-group-title" type="button" @click="toggleGroup(group.tagName)">
+              <span class="tag-group-name">#{{ group.tagName }}</span>
+              <span class="tag-group-meta">
+                <span class="tag-group-count">{{ group.items.length }}</span>
+                <span class="tag-group-toggle">{{ isGroupCollapsed(group.tagName) ? '展开' : '收起' }}</span>
+              </span>
+            </button>
+
+            <div v-show="!isGroupCollapsed(group.tagName)" class="link-card-list">
+              <article v-for="item in group.items" :key="item.id" class="link-card-item">
+                <div class="link-card-main">
+                  <el-checkbox
+                    :model-value="selectedLinkIds.includes(item.id)"
+                    @change="(val) => toggleLinkSelected(item.id, val as boolean)"
+                  />
+                  <div class="link-content">
+                    <div class="title-line">
+                      <template v-if="editingTitleId === item.id">
+                        <el-input
+                          :model-value="editingTitleValue"
+                          size="small"
+                          maxlength="500"
+                          placeholder="请输入标题"
+                          @update:model-value="(val) => (editingTitleValue = val)"
+                          @keyup.enter="saveTitleEdit(item)"
+                          @keyup.esc="cancelTitleEdit"
+                        />
+                        <div class="title-edit-actions">
+                          <el-button size="small" type="primary" @click="saveTitleEdit(item)">保存</el-button>
+                          <el-button size="small" @click="cancelTitleEdit">取消</el-button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <span class="title-text">{{ displayTitle(item) }}</span>
+                        <el-button size="small" text type="primary" @click="startTitleEdit(item)">编辑标题</el-button>
+                      </template>
+                    </div>
+
+                    <a class="url-line" :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
+
+                    <div class="meta-line">
+                      <el-tag size="small" :type="classificationSourceTagType(item.classification_source)">
+                        {{ classificationSourceLabel(item.classification_source) }}
+                      </el-tag>
+                      <el-select
+                        :model-value="item.status"
+                        size="small"
+                        style="width: 96px"
+                        @change="(val) => patchLink(item.id, { status: val })"
+                      >
+                        <el-option value="unread" label="未读" />
+                        <el-option value="read" label="已读" />
+                        <el-option value="ignored" label="忽略" />
+                      </el-select>
+                      <el-select
+                        :model-value="item.category_id"
+                        size="small"
+                        style="width: 140px"
+                        placeholder="标签"
+                        @change="(val) => patchLink(item.id, { category_id: val })"
+                      >
+                        <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+                      </el-select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="op-cell">
+                  <el-button size="small" text type="primary" @click="reclassifyLink(item.id)">重分</el-button>
+                  <el-button
+                    size="small"
+                    text
+                    :type="item.is_archived ? 'warning' : 'info'"
+                    @click="toggleArchive(item)"
+                  >
+                    {{ item.is_archived ? '取消归档' : '归档' }}
+                  </el-button>
+                  <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(item.id)">
+                    <template #reference>
+                      <el-button size="small" text type="danger">删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </div>
+              </article>
             </div>
-          </article>
+          </section>
         </div>
       </el-card>
     </section>
@@ -182,11 +218,43 @@ const newTag = ref({ name: '', description: '' })
 
 const tagDialogVisible = ref(false)
 const selectedLinkIds = ref<number[]>([])
+const collapsedGroups = ref<Record<string, boolean>>({})
+const editingTitleId = ref<number | null>(null)
+const editingTitleValue = ref('')
 const editingTag = ref<{ id: number | null; name: string; description: string }>({
   id: null,
   name: '',
   description: '',
 })
+
+const displayTitle = (item: LinkItem) => (item.title || '').trim() || item.url
+
+const isGroupCollapsed = (tagName: string) => Boolean(collapsedGroups.value[tagName])
+
+const toggleGroup = (tagName: string) => {
+  collapsedGroups.value = {
+    ...collapsedGroups.value,
+    [tagName]: !collapsedGroups.value[tagName],
+  }
+}
+
+const startTitleEdit = (item: LinkItem) => {
+  editingTitleId.value = item.id
+  editingTitleValue.value = displayTitle(item)
+}
+
+const cancelTitleEdit = () => {
+  editingTitleId.value = null
+  editingTitleValue.value = ''
+}
+
+const saveTitleEdit = async (item: LinkItem) => {
+  const value = editingTitleValue.value.trim() || item.url
+  await patchLink(item.id, { title: value }, false)
+  item.title = value
+  cancelTitleEdit()
+  ElMessage.success('标题已更新')
+}
 
 const loadCategories = async () => {
   const { data } = await api.get('/api/link-categories')
@@ -213,6 +281,7 @@ const load = async () => {
   const filtered = (data as LinkItem[]).filter((i) => (showArchived.value ? true : !i.is_archived))
   links.value = filtered
   selectedLinkIds.value = []
+  editingTitleId.value = null
 }
 
 const classificationSourceLabel = (source: string) => {
@@ -246,8 +315,8 @@ const groupedLinks = computed(() => {
     .map(([tagName, items]) => ({
       tagName,
       items: [...items].sort((a, b) => {
-        const at = a.created_at ? new Date(a.created_at).getTime() : 0
-        const bt = b.created_at ? new Date(b.created_at).getTime() : 0
+        const at = a.created_at ? new Date(a.created_at).getTime() : a.id
+        const bt = b.created_at ? new Date(b.created_at).getTime() : b.id
         return bt - at
       }),
     }))
@@ -266,7 +335,7 @@ const submitBatch = async () => {
   await load()
 }
 
-const patchLink = async (id: number, payload: Record<string, any>) => {
+const patchLink = async (id: number, payload: Record<string, any>, showToast = true) => {
   await api.patch(`/api/links/${id}`, payload)
   const target = links.value.find((item) => item.id === id)
   if (target) {
@@ -276,7 +345,9 @@ const patchLink = async (id: number, payload: Record<string, any>) => {
       target.category_name = category?.name || null
     }
   }
-  ElMessage.success('已更新')
+  if (showToast) {
+    ElMessage.success('已更新')
+  }
 }
 
 const toggleArchive = async (row: LinkItem) => {
@@ -432,25 +503,6 @@ onMounted(async () => {
   line-height: 1.6;
 }
 
-
-.title-line {
-  font-weight: 600;
-  color: var(--mx-text-strong);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.url-line {
-  display: block;
-  margin-top: 2px;
-  color: var(--mx-text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .group-header {
   display: flex;
   align-items: center;
@@ -458,7 +510,65 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.tag-list-header {
+  font-size: 12px;
+  color: var(--mx-text-muted);
+  margin-bottom: 10px;
+}
+
+.tag-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tag-group-item {
+  border: 1px solid var(--mx-border);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tag-group-title {
+  width: 100%;
+  border: 1px solid var(--mx-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--mx-text-normal);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.tag-group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-group-count {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(120, 120, 120, 0.22);
+  color: var(--mx-text-normal);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  padding: 0 6px;
+}
+
+.tag-group-toggle {
+  font-size: 12px;
+  color: var(--mx-text-muted);
+}
+
 .link-card-list {
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -486,6 +596,31 @@ onMounted(async () => {
 .link-content {
   min-width: 0;
   flex: 1;
+}
+
+.title-line {
+  font-weight: 600;
+  color: var(--mx-text-strong);
+}
+
+.title-text {
+  margin-right: 6px;
+}
+
+.title-edit-actions {
+  margin-top: 6px;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.url-line {
+  display: block;
+  margin-top: 2px;
+  color: var(--mx-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .meta-line {

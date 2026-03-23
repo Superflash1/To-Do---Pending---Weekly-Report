@@ -135,6 +135,22 @@ if not logging.getLogger().handlers:
     )
 logger.setLevel(logging.INFO)
 
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE_PATH = LOG_DIR / "backend.log"
+
+root_logger = logging.getLogger()
+has_file_handler = any(
+    isinstance(handler, logging.FileHandler)
+    and Path(getattr(handler, "baseFilename", "")).resolve() == LOG_FILE_PATH.resolve()
+    for handler in root_logger.handlers
+)
+if not has_file_handler:
+    file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    root_logger.addHandler(file_handler)
+
 
 
 def _resolve_link_classification_prompt(raw_prompt: str | None) -> str:
@@ -572,6 +588,25 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/system/logs")
+def get_backend_logs(
+    current_user: Annotated[User, Depends(get_current_user)],
+    lines: int = 300,
+):
+    safe_lines = max(10, min(lines, 2000))
+    try:
+        with LOG_FILE_PATH.open("r", encoding="utf-8", errors="ignore") as f:
+            all_lines = f.readlines()
+    except FileNotFoundError:
+        return {"lines": [], "total": 0}
+
+    selected = all_lines[-safe_lines:]
+    return {
+        "lines": [line.rstrip("\n") for line in selected],
+        "total": len(all_lines),
+    }
+
+
 @app.post("/api/auth/register", response_model=UserOut)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     exists = db.query(User).filter(User.email == payload.email).first()
@@ -952,6 +987,9 @@ def patch_link(
     )
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
+    if payload.title is not None:
+        link.title = payload.title.strip() if payload.title else link.url
+        link.classification_source = "manual"
     if payload.status:
         link.status = payload.status
     if payload.category_id is not None:

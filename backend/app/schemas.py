@@ -86,6 +86,7 @@ class LinkOut(BaseModel):
 
 
 class LinkPatch(BaseModel):
+    title: str | None = None
     status: str | None = None
     category_id: int | None = None
     is_archived: bool | None = None

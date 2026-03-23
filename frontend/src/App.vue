@@ -18,6 +18,7 @@
           <el-menu-item index="/todos">待办池</el-menu-item>
           <el-menu-item index="/reports">周报引擎</el-menu-item>
           <el-menu-item index="/settings">提醒中枢</el-menu-item>
+          <el-menu-item index="/logs">后端日志</el-menu-item>
         </el-menu>
 
         <section class="actions-wrap">
