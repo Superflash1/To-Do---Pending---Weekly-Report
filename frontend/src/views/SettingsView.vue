@@ -1,11 +1,6 @@
 <template>
   <div class="page">
     <el-card>
-      <h2 class="page-title">提醒中枢</h2>
-      <p class="page-subtitle">统一管理邮件提醒、频率节奏与智能配置</p>
-    </el-card>
-
-    <el-card>
       <template #header>
         <div class="card-title">系统配置</div>
       </template>

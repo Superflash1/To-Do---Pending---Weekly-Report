@@ -51,4 +51,6 @@ cp .env.example .env
 
 - 当前为 MVP，数据库表由应用启动时自动创建（未接 Alembic 迁移）
 - SMTP 凭据请使用应用专用密码
-- 图片存储在 `./data/uploads` 映射目录
+- 图片存储在 `./uploads` 目录（生产建议挂载该目录）
+- 生产环境务必配置 `JWT_SECRET`（禁止使用默认值 `change_me`）
+- 可通过 `CORS_ALLOW_ORIGINS` 配置允许的前端域名（逗号分隔）

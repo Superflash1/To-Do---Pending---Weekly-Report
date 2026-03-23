@@ -275,6 +275,15 @@ const addTodo = async () => {
 }
 
 const selectTodo = async (id: number) => {
+  if (selected.value && saveState.value === 'dirty') {
+    try {
+      await save(true)
+    } catch {
+      ElMessage.error('切换前自动保存失败，请稍后重试')
+      return
+    }
+  }
+
   isHydrating.value = true
   const { data } = await api.get(`/api/todos/${id}`)
   selected.value = data.todo

@@ -1,11 +1,6 @@
 <template>
   <div class="page">
     <el-card>
-      <h2 class="page-title">周报引擎</h2>
-      <p class="page-subtitle">把已办事项自动编排成可复用的每周表达</p>
-    </el-card>
-
-    <el-card>
       <template #header>
         <div class="card-title">生成周报</div>
       </template>

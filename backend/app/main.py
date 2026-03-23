@@ -1,8 +1,10 @@
 import asyncio
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -11,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import Base, engine, get_db
 from app.dependencies import get_current_user
 from app.models import (
@@ -52,7 +55,32 @@ from app.services.link_meta import fetch_link_meta
 from app.services.llm_service import llm_service
 from app.services.smtp_service import send_email
 
+DEFAULT_LINK_CLASSIFICATION_PROMPT = (
+    "你是链接标签分类助手。先提炼核心主题，再和现有标签做语义相似度比对。"
+    "现有标签：{existing_tags}；现有标签数量：{existing_tag_count}；"
+    "匹配阈值：{match_threshold}；策略：{new_tag_policy}。"
+    "标题：{title}；摘要：{summary}。"
+    "当最高相似度低于阈值时，category 输出建议新标签名，不要输出‘其他/未分类/未打标签’。"
+    "输出JSON: {\"core_topic\":\"...\",\"category\":\"最接近已有标签或建议新标签\",\"confidence\":0-1,\"reason\":\"...\"}"
+)
+LEGACY_PROMPT_MARKERS = (
+    "若无>=0.75直接匹配，category用\"其他\"",
+    "category用\"其他\"",
+)
+
 Base.metadata.create_all(bind=engine)
+
+CLASSIFICATION_QUEUE: dict[int, set[int]] = {}
+CLASSIFICATION_WORKERS: set[int] = set()
+CLASSIFICATION_RETRY_COUNTS: dict[int, int] = {}
+MAX_CLASSIFICATION_RETRIES = 3
+RETRY_BASE_DELAY_SECONDS = 10
+SIMILARITY_THRESHOLD_FEWER_TAGS = 0.9
+SIMILARITY_THRESHOLD_MORE_TAGS = 0.7
+TAG_COUNT_SPLIT = 10
+MIN_CONFIDENCE_TO_CREATE_NEW_CATEGORY = 0.55
+ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 def run_sqlite_lightweight_migrations() -> None:
@@ -80,27 +108,42 @@ def run_sqlite_lightweight_migrations() -> None:
                         "NOT NULL DEFAULT ''"
                     )
                 )
-                conn.execute(
-                    text(
-                        "UPDATE user_preferences "
-                        "SET link_classification_prompt_template = :prompt "
-                        "WHERE link_classification_prompt_template = ''"
-                    ),
-                    {
-                        "prompt": (
-                            "你是链接标签助手。请严格先从 {existing_tags} 中选择一个最匹配标签；"
-                            "只有都不匹配时才创建新标签。"
-                            "链接标题：{title}；链接摘要：{summary}。"
-                            "输出JSON: {\"category\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}"
-                        )
-                    },
-                )
+
+            conn.execute(
+                text(
+                    "UPDATE user_preferences "
+                    "SET link_classification_prompt_template = :prompt "
+                    "WHERE link_classification_prompt_template = '' "
+                    "OR link_classification_prompt_template LIKE :legacy_marker_1 "
+                    "OR link_classification_prompt_template LIKE :legacy_marker_2"
+                ),
+                {
+                    "prompt": DEFAULT_LINK_CLASSIFICATION_PROMPT,
+                    "legacy_marker_1": "%若无>=0.75直接匹配，category用\"其他\"%",
+                    "legacy_marker_2": "%category用\"其他\"%",
+                },
+            )
 
 
 run_sqlite_lightweight_migrations()
 
-CLASSIFICATION_QUEUE: dict[int, set[int]] = {}
-CLASSIFICATION_WORKERS: set[int] = set()
+logger = logging.getLogger(__name__)
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+logger.setLevel(logging.INFO)
+
+
+
+def _resolve_link_classification_prompt(raw_prompt: str | None) -> str:
+    prompt = str(raw_prompt or "").strip()
+    if not prompt:
+        return DEFAULT_LINK_CLASSIFICATION_PROMPT
+    if any(marker in prompt for marker in LEGACY_PROMPT_MARKERS):
+        return DEFAULT_LINK_CLASSIFICATION_PROMPT
+    return prompt
 
 
 def _normalize_new_tag_name(raw_name: str) -> str:
@@ -109,10 +152,23 @@ def _normalize_new_tag_name(raw_name: str) -> str:
         return "待分组"
 
     cleaned = re.sub(r"\s+", " ", name)
+
+    # 常见主题优先映射，避免生成冗长句式标签
+    if re.search(r"待办|任务|周报|计划|事项", cleaned):
+        return "任务管理"
+    if re.search(r"学习|教程|课程|笔记|知识", cleaned):
+        return "学习笔记"
+    if re.search(r"开发|代码|编程|接口|api|github", cleaned, re.IGNORECASE):
+        return "开发技术"
+
     has_cjk = bool(re.search(r"[\u4e00-\u9fff]", cleaned))
     if has_cjk:
         cjk_chars = re.findall(r"[\u4e00-\u9fff]", cleaned)
-        normalized = "".join(cjk_chars[:5])
+        normalized = "".join(cjk_chars)
+        # 去掉无意义前缀词，避免“一个用于管理”类标签
+        for stop in ["一个", "用于", "关于", "相关", "项目", "仓库", "链接", "内容"]:
+            normalized = normalized.replace(stop, "")
+        normalized = normalized[:6]
         return normalized or "待分组"
 
     words = re.findall(r"[A-Za-z0-9_-]+", cleaned)
@@ -128,24 +184,62 @@ def _choose_or_create_category_by_rule(
     categories: list[LinkCategory],
     category_names: list[str],
     classify: dict,
-) -> tuple[LinkCategory | None, float]:
+) -> tuple[LinkCategory | None, float, str]:
     confidence = float(classify.get("confidence", 0.0) or 0.0)
     ai_name = str(classify.get("category") or "").strip()
 
-    # 1) 高置信命中已有标签 -> 直接采用
-    if confidence >= 0.7 and ai_name:
-        matched = next((c for c in categories if c.name == ai_name), None)
-        if matched:
-            return matched, confidence
+    invalid_bucket_names = {"其他", "未分类", "未打标签"}
+    if ai_name in invalid_bucket_names and len(categories) == 0:
+        ai_name = ""
 
-    # 2) 其余情况统一走新建/复用标签逻辑，避免 category_id 为空长期挂起
-    candidate_name = _normalize_new_tag_name(ai_name)
+    # 标签数量驱动阈值：<10 用 0.9，>=10 用 0.7
+    tag_count = len(categories)
+    threshold = (
+        SIMILARITY_THRESHOLD_FEWER_TAGS
+        if tag_count < TAG_COUNT_SPLIT
+        else SIMILARITY_THRESHOLD_MORE_TAGS
+    )
+
+    # 满足阈值且命中现有标签 -> 直接采用
+    matched = next((c for c in categories if c.name == ai_name), None) if ai_name else None
+    if matched and confidence >= threshold:
+        return matched, confidence, f"match_existing_by_threshold_{threshold:.1f}"
+
+    # 不满足阈值（或未命中现有标签）时，只有达到最低可信度才允许新建标签，避免标签爆炸
+    if confidence < MIN_CONFIDENCE_TO_CREATE_NEW_CATEGORY:
+        fallback_existing = next((c for c in categories if c.name == "待分组"), None)
+        if fallback_existing:
+            return fallback_existing, confidence, "fallback_low_confidence_reuse_pending"
+
+        try:
+            created_pending = LinkCategory(
+                owner_id=current_user.id,
+                name="待分组",
+                created_by="ai",
+            )
+            db.add(created_pending)
+            db.flush()
+            categories.append(created_pending)
+            category_names.append(created_pending.name)
+            return created_pending, confidence, "fallback_low_confidence_create_pending"
+        except Exception:
+            db.rollback()
+            existing_after = (
+                db.query(LinkCategory)
+                .filter(LinkCategory.owner_id == current_user.id, LinkCategory.name == "待分组")
+                .first()
+            )
+            if existing_after:
+                return existing_after, confidence, "fallback_low_confidence_reuse_after_conflict"
+            return None, confidence, "fallback_low_confidence_none"
+
+    candidate_name = _normalize_new_tag_name(ai_name or str(classify.get("core_topic") or ""))
     if not candidate_name:
         candidate_name = "待分组"
 
     existing = next((c for c in categories if c.name == candidate_name), None)
     if existing:
-        return existing, confidence
+        return existing, confidence, "reuse_normalized_existing"
 
     try:
         created = LinkCategory(
@@ -157,45 +251,80 @@ def _choose_or_create_category_by_rule(
         db.flush()
         categories.append(created)
         category_names.append(created.name)
-        return created, confidence
-    except Exception:
+        return created, confidence, "create_new_category"
+    except Exception as exc:
         db.rollback()
+        logger.warning(
+            "link_classify_category_create_failed owner_id=%s candidate=%s error=%s",
+            current_user.id,
+            candidate_name,
+            str(exc),
+        )
         existing_after = (
             db.query(LinkCategory)
             .filter(LinkCategory.owner_id == current_user.id, LinkCategory.name == candidate_name)
             .first()
         )
         if existing_after:
-            return existing_after, confidence
-        return None, confidence
+            return existing_after, confidence, "reuse_after_create_conflict"
+        return None, confidence, "fallback_none"
+
+
+async def _schedule_classification_retry(owner_id: int, link_id: int, delay_seconds: int, attempt: int) -> None:
+    logger.info(
+        "link_classify_retry_scheduled owner_id=%s link_id=%s attempt=%s delay_seconds=%s",
+        owner_id,
+        link_id,
+        attempt,
+        delay_seconds,
+    )
+    await asyncio.sleep(delay_seconds)
+
+    if owner_id not in CLASSIFICATION_QUEUE:
+        CLASSIFICATION_QUEUE[owner_id] = set()
+    CLASSIFICATION_QUEUE[owner_id].add(link_id)
+
+    logger.info(
+        "link_classify_retry_requeued owner_id=%s link_id=%s attempt=%s queue_size=%s",
+        owner_id,
+        link_id,
+        attempt,
+        len(CLASSIFICATION_QUEUE[owner_id]),
+    )
+
+    if owner_id not in CLASSIFICATION_WORKERS:
+        asyncio.create_task(_run_classification_worker(owner_id))
 
 
 async def _classify_link_item(link_id: int, owner_id: int) -> None:
     db = next(get_db())
+    started = perf_counter()
     try:
         link = db.query(LinkItem).filter(LinkItem.id == link_id, LinkItem.owner_id == owner_id).first()
         if not link:
+            logger.warning("link_classify_skip_missing_link owner_id=%s link_id=%s", owner_id, link_id)
             return
 
         user = db.query(User).filter(User.id == owner_id).first()
         if not user:
+            logger.warning("link_classify_skip_missing_user owner_id=%s link_id=%s", owner_id, link_id)
             return
 
         categories = db.query(LinkCategory).filter(LinkCategory.owner_id == owner_id).all()
         category_names = [c.name for c in categories]
 
         prefs = db.query(UserPreference).filter(UserPreference.owner_id == owner_id).first()
-        classify_prompt = (
-            prefs.link_classification_prompt_template
-            if prefs and getattr(prefs, "link_classification_prompt_template", None)
-            else (
-                "你是链接标签助手。请严格先从 {existing_tags} 中选择一个最匹配标签；"
-                "只有都不匹配时才创建新标签。"
-                "链接标题：{title}；链接摘要：{summary}。"
-                "输出JSON: {\"category\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}"
-            )
+        classify_prompt = _resolve_link_classification_prompt(
+            prefs.link_classification_prompt_template if prefs else None
         )
         provider_config = resolve_active_llm_provider_config(db, owner_id)
+        logger.info(
+            "link_classify_start owner_id=%s link_id=%s domain=%s existing_categories_count=%s",
+            owner_id,
+            link_id,
+            link.domain,
+            len(category_names),
+        )
         classify = await llm_service.classify_link(
             link.title or "",
             link.summary or "",
@@ -204,7 +333,65 @@ async def _classify_link_item(link_id: int, owner_id: int) -> None:
             classification_prompt_template=classify_prompt,
         )
 
-        category, confidence = _choose_or_create_category_by_rule(
+        should_retry = bool(classify.get("should_retry"))
+        llm_failed = bool(classify.get("llm_failed"))
+        if should_retry:
+            current_attempt = CLASSIFICATION_RETRY_COUNTS.get(link_id, 0) + 1
+            CLASSIFICATION_RETRY_COUNTS[link_id] = current_attempt
+
+            fallback_category = next((c for c in categories if c.name == "其他"), None)
+            if fallback_category is None:
+                fallback_category = LinkCategory(
+                    owner_id=user.id,
+                    name="其他",
+                    created_by="ai",
+                )
+                db.add(fallback_category)
+                db.flush()
+                categories.append(fallback_category)
+                category_names.append(fallback_category.name)
+
+            link.category_id = fallback_category.id
+            link.classification_source = "fallback_retrying"
+            link.classification_confidence = 0.0
+
+            elapsed_ms = int((perf_counter() - started) * 1000)
+            if current_attempt <= MAX_CLASSIFICATION_RETRIES:
+                delay_seconds = RETRY_BASE_DELAY_SECONDS * (2 ** (current_attempt - 1))
+                db.commit()
+                logger.warning(
+                    "link_classify_retry_required owner_id=%s link_id=%s llm_failed=%s attempt=%s max_retries=%s delay_seconds=%s fallback_category=%s reason=%s raw_output=%s elapsed_ms=%s",
+                    owner_id,
+                    link_id,
+                    llm_failed,
+                    current_attempt,
+                    MAX_CLASSIFICATION_RETRIES,
+                    delay_seconds,
+                    fallback_category.name,
+                    str(classify.get("reason") or ""),
+                    str(classify.get("raw_output") or "")[:200],
+                    elapsed_ms,
+                )
+                asyncio.create_task(
+                    _schedule_classification_retry(owner_id, link_id, delay_seconds, current_attempt)
+                )
+            else:
+                link.classification_source = "fallback_failed"
+                db.commit()
+                logger.error(
+                    "link_classify_retry_exhausted owner_id=%s link_id=%s llm_failed=%s attempts=%s fallback_category=%s reason=%s raw_output=%s elapsed_ms=%s",
+                    owner_id,
+                    link_id,
+                    llm_failed,
+                    current_attempt,
+                    fallback_category.name,
+                    str(classify.get("reason") or ""),
+                    str(classify.get("raw_output") or "")[:200],
+                    elapsed_ms,
+                )
+            return
+
+        category, confidence, decision_path = _choose_or_create_category_by_rule(
             db=db,
             current_user=user,
             categories=categories,
@@ -216,32 +403,77 @@ async def _classify_link_item(link_id: int, owner_id: int) -> None:
         link.classification_source = "ai"
         link.classification_confidence = confidence
         db.commit()
+        CLASSIFICATION_RETRY_COUNTS.pop(link_id, None)
+
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        logger.info(
+            "link_classify_done owner_id=%s link_id=%s core_topic=%s llm_category=%s llm_confidence=%.3f cold_start=%s suggested_new_tag=%s decision_path=%s final_category_id=%s final_category_name=%s reason=%s raw_output=%s elapsed_ms=%s",
+            owner_id,
+            link_id,
+            str(classify.get("core_topic") or ""),
+            str(classify.get("category") or ""),
+            confidence,
+            bool(classify.get("cold_start")),
+            bool(classify.get("suggested_new_tag")),
+            decision_path,
+            category.id if category else None,
+            category.name if category else None,
+            str(classify.get("reason") or ""),
+            str(classify.get("raw_output") or "")[:200],
+            elapsed_ms,
+        )
+    except Exception:
+        logger.exception("link_classify_failed owner_id=%s link_id=%s", owner_id, link_id)
+        raise
     finally:
         db.close()
 
 
 async def _run_classification_worker(owner_id: int) -> None:
     if owner_id in CLASSIFICATION_WORKERS:
+        logger.info("link_classify_worker_skip_already_running owner_id=%s", owner_id)
         return
     CLASSIFICATION_WORKERS.add(owner_id)
+    logger.info(
+        "link_classify_worker_start owner_id=%s initial_queue_size=%s",
+        owner_id,
+        len(CLASSIFICATION_QUEUE.get(owner_id, set())),
+    )
     try:
         while CLASSIFICATION_QUEUE.get(owner_id):
+            queue_size_before = len(CLASSIFICATION_QUEUE.get(owner_id, set()))
             link_id = CLASSIFICATION_QUEUE[owner_id].pop()
+            logger.info(
+                "link_classify_worker_pick owner_id=%s link_id=%s queue_size_before=%s queue_size_after=%s",
+                owner_id,
+                link_id,
+                queue_size_before,
+                len(CLASSIFICATION_QUEUE.get(owner_id, set())),
+            )
             try:
                 await _classify_link_item(link_id, owner_id)
             except Exception:
                 # 避免单条失败导致整个队列停摆
+                logger.exception("link_classify_worker_item_failed owner_id=%s link_id=%s", owner_id, link_id)
                 continue
         CLASSIFICATION_QUEUE.pop(owner_id, None)
+        logger.info("link_classify_worker_done owner_id=%s", owner_id)
     finally:
         CLASSIFICATION_WORKERS.discard(owner_id)
 
 
 app = FastAPI(title="Second Brain Tool API")
 
+if settings.app_env.lower() in {"production", "prod"} and settings.jwt_secret == "change_me":
+    raise RuntimeError("JWT_SECRET must be set in production and cannot be 'change_me'.")
+
+cors_origins = settings.parsed_cors_allow_origins
+if not cors_origins:
+    cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -408,12 +640,11 @@ def get_preferences(
         db.add(prefs)
         db.commit()
         db.refresh(prefs)
-    if not getattr(prefs, "link_classification_prompt_template", None):
-        prefs.link_classification_prompt_template = (
-            "你是链接标签助手。请优先从已有标签中选择一个最匹配的标签；"
-            "只有在都不匹配时才创建一个新标签。输出JSON:"
-            '{"category":"...","confidence":0-1,"reason":"..."}'
-        )
+    resolved_prompt = _resolve_link_classification_prompt(
+        getattr(prefs, "link_classification_prompt_template", None)
+    )
+    if resolved_prompt != getattr(prefs, "link_classification_prompt_template", ""):
+        prefs.link_classification_prompt_template = resolved_prompt
         db.commit()
 
     return {
@@ -626,6 +857,12 @@ async def create_links_batch(
         if not dedup_key:
             continue
         if dedup_key in existing_urls or dedup_key in pending_urls:
+            logger.info(
+                "link_batch_skip_duplicate owner_id=%s url=%s dedup_key=%s",
+                current_user.id,
+                url,
+                dedup_key,
+            )
             continue
 
         title, summary, domain = await fetch_link_meta(url)
@@ -648,6 +885,14 @@ async def create_links_batch(
         if current_user.id not in CLASSIFICATION_QUEUE:
             CLASSIFICATION_QUEUE[current_user.id] = set()
         CLASSIFICATION_QUEUE[current_user.id].add(item.id)
+        logger.info(
+            "link_batch_queued owner_id=%s link_id=%s url=%s domain=%s queue_size=%s",
+            current_user.id,
+            item.id,
+            url,
+            domain,
+            len(CLASSIFICATION_QUEUE[current_user.id]),
+        )
 
     db.commit()
     for i in created_items:
@@ -710,6 +955,16 @@ def patch_link(
     if payload.status:
         link.status = payload.status
     if payload.category_id is not None:
+        category = (
+            db.query(LinkCategory)
+            .filter(
+                LinkCategory.id == payload.category_id,
+                LinkCategory.owner_id == current_user.id,
+            )
+            .first()
+        )
+        if not category:
+            raise HTTPException(status_code=400, detail="Invalid category_id for current user")
         link.category_id = payload.category_id
         link.classification_source = "manual"
     if payload.is_archived is not None:
@@ -738,15 +993,8 @@ async def reclassify_link(
     category_names = [c.name for c in categories]
 
     prefs = db.query(UserPreference).filter(UserPreference.owner_id == current_user.id).first()
-    classify_prompt = (
-        prefs.link_classification_prompt_template
-        if prefs and getattr(prefs, "link_classification_prompt_template", None)
-        else (
-            "你是链接标签助手。请严格先从 {existing_tags} 中选择一个最匹配标签；"
-            "只有都不匹配时才创建新标签。"
-            "链接标题：{title}；链接摘要：{summary}。"
-            "输出JSON: {\"category\":\"...\",\"confidence\":0-1,\"reason\":\"...\"}"
-        )
+    classify_prompt = _resolve_link_classification_prompt(
+        prefs.link_classification_prompt_template if prefs else None
     )
 
     provider_config = resolve_active_llm_provider_config(db, current_user.id)
@@ -758,12 +1006,26 @@ async def reclassify_link(
         classification_prompt_template=classify_prompt,
     )
 
-    category, confidence = _choose_or_create_category_by_rule(
+    category, confidence, decision_path = _choose_or_create_category_by_rule(
         db=db,
         current_user=current_user,
         categories=categories,
         category_names=category_names,
         classify=classify,
+    )
+
+    logger.info(
+        "link_reclassify owner_id=%s link_id=%s core_topic=%s llm_category=%s llm_confidence=%.3f decision_path=%s final_category_id=%s final_category_name=%s reason=%s raw_output=%s",
+        current_user.id,
+        link.id,
+        str(classify.get("core_topic") or ""),
+        str(classify.get("category") or ""),
+        confidence,
+        decision_path,
+        category.id if category else None,
+        category.name if category else None,
+        str(classify.get("reason") or ""),
+        str(classify.get("raw_output") or "")[:200],
     )
 
     link.category_id = category.id if category else None
@@ -993,9 +1255,22 @@ async def upload_todo_image(
     if not todo:
         raise HTTPException(status_code=404, detail="Todo not found")
 
-    file_name = f"{current_user.id}_{todo_id}_{int(datetime.utcnow().timestamp())}_{file.filename}"
-    file_path = UPLOAD_DIR / file_name
     content = await file.read()
+    if len(content) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 5MB)")
+
+    mime_type = (file.content_type or "").lower().strip()
+    if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported image type")
+
+    original_name = Path(file.filename or "upload").name
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original_name)
+    if not safe_name:
+        safe_name = "upload"
+
+    timestamp = int(datetime.utcnow().timestamp())
+    file_name = f"{current_user.id}_{todo_id}_{timestamp}_{safe_name}"
+    file_path = UPLOAD_DIR / file_name
     file_path.write_bytes(content)
 
     image = TodoImage(
@@ -1003,7 +1278,7 @@ async def upload_todo_image(
         owner_id=current_user.id,
         file_path=str(file_path),
         file_name=file.filename,
-        mime_type=file.content_type or "",
+        mime_type=mime_type,
         size_bytes=len(content),
     )
     db.add(image)

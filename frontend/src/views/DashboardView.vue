@@ -10,26 +10,26 @@
       </div>
 
       <div class="pipeline">
-        <div class="pipe-node">
+        <button class="pipe-node" type="button" @click="goTo('/links')">
           <span>待读池</span>
           <strong>{{ linkStats.total }}</strong>
-        </div>
+        </button>
         <div class="pipe-arrow">→</div>
-        <div class="pipe-node">
+        <button class="pipe-node" type="button" @click="goTo('/todos')">
           <span>待办池</span>
           <strong>{{ todoStats.total }}</strong>
-        </div>
+        </button>
         <div class="pipe-arrow">→</div>
-        <div class="pipe-node">
+        <button class="pipe-node" type="button" @click="goTo('/reports')">
           <span>周报候选</span>
           <strong>{{ todoStats.done }}</strong>
-        </div>
+        </button>
       </div>
     </el-card>
 
     <el-row :gutter="16">
       <el-col :xs="24" :lg="12">
-        <el-card class="stat-card">
+        <el-card class="stat-card clickable-card" @click="goTo('/links')">
           <template #header>
             <div class="section-title">待读池状态</div>
           </template>
@@ -56,7 +56,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="12">
-        <el-card class="stat-card">
+        <el-card class="stat-card clickable-card" @click="goTo('/todos')">
           <template #header>
             <div class="section-title">待办池状态</div>
           </template>
@@ -92,6 +92,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
 
 type LinkItem = {
@@ -103,8 +104,14 @@ type TodoItem = {
   status: 'todo' | 'in_progress' | 'done'
 }
 
+const router = useRouter()
+
 const links = ref<LinkItem[]>([])
 const todos = ref<TodoItem[]>([])
+
+const goTo = (path: string) => {
+  router.push(path)
+}
 
 const load = async () => {
   const [linksRes, todosRes] = await Promise.all([api.get('/api/links'), api.get('/api/todos')])
@@ -182,6 +189,20 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.pipe-node:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.2);
+  border-color: var(--mx-border-strong);
+}
+
+.pipe-node:focus-visible {
+  outline: 2px solid rgba(120, 120, 120, 0.42);
+  outline-offset: 2px;
 }
 
 .pipe-node span {
@@ -237,5 +258,14 @@ onMounted(load)
 .progress-label {
   margin-bottom: 8px;
   color: var(--mx-text-muted);
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-1px);
 }
 </style>

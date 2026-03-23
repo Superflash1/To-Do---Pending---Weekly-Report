@@ -1,140 +1,137 @@
 <template>
-  <div class="page">
-    <el-card>
-      <h2 class="page-title">待读池</h2>
-      <p class="page-subtitle">收集有价值输入，把外部灵感转成可执行线索</p>
-    </el-card>
+  <div class="page links-layout">
+    <section class="left-panel">
+      <el-card>
+        <template #header>
+          <div class="card-title">批量导入</div>
+        </template>
+        <el-form>
+          <el-form-item label="批量链接（每行一个）">
+            <el-input type="textarea" v-model="urlText" :rows="4" />
+          </el-form-item>
+          <el-space wrap>
+            <el-button type="primary" @click="submitBatch">批量添加</el-button>
+            <el-button :disabled="selectedLinkIds.length === 0" @click="batchReclassifyLinks">
+              批量重新 AI 分类
+            </el-button>
+            <el-button @click="load">刷新</el-button>
+            <el-switch
+              v-model="showArchived"
+              active-text="显示归档"
+              inactive-text="隐藏归档"
+              @change="load"
+            />
+          </el-space>
+        </el-form>
+      </el-card>
 
-    <el-card>
-      <template #header>
-        <div class="card-title">批量导入</div>
-      </template>
-      <el-form>
-        <el-form-item label="批量链接（每行一个）">
-          <el-input type="textarea" v-model="urlText" :rows="4" />
-        </el-form-item>
-        <el-space wrap>
-          <el-button type="primary" @click="submitBatch">批量添加</el-button>
-          <el-button @click="load">刷新</el-button>
-          <el-switch
-            v-model="showArchived"
-            active-text="显示归档"
-            inactive-text="隐藏归档"
-            @change="load"
-          />
-        </el-space>
-      </el-form>
-    </el-card>
+      <el-card>
+        <template #header>
+          <div class="card-title">标签管理</div>
+        </template>
+        <p class="section-tip">标签用于组织链接分组，删除标签不会删除链接本身。</p>
+        <el-form inline style="margin-bottom: 12px">
+          <el-form-item label="新增标签">
+            <el-input v-model="newTag.name" placeholder="标签名" style="width: 180px" />
+          </el-form-item>
+          <el-form-item>
+            <el-input v-model="newTag.description" placeholder="说明(可选)" style="width: 260px" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="addTag">新增标签</el-button>
+          </el-form-item>
+        </el-form>
+        <el-table :data="categories" stripe>
+          <el-table-column label="标签" min-width="170">
+            <template #default="scope">
+              <div class="tag-name-cell">
+                <div class="tag-name">{{ scope.row.name }}</div>
+                <div v-if="scope.row.description" class="tag-desc">{{ scope.row.description }}</div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="128" fixed="right">
+            <template #default="scope">
+              <el-space size="small">
+                <el-button size="small" text @click="openEditTag(scope.row)">编辑</el-button>
+                <el-popconfirm title="删除后会保留链接，但清空它们的标签，确认？" @confirm="removeTag(scope.row.id)">
+                  <template #reference>
+                    <el-button size="small" text type="danger">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </el-space>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </section>
 
-    <el-card>
-      <template #header>
-        <div class="card-title">标签管理</div>
-      </template>
-      <p class="section-tip">标签用于组织链接分组，删除标签不会删除链接本身。</p>
-      <el-form inline style="margin-bottom: 12px">
-        <el-form-item label="新增标签">
-          <el-input v-model="newTag.name" placeholder="标签名" style="width: 180px" />
-        </el-form-item>
-        <el-form-item>
-          <el-input v-model="newTag.description" placeholder="说明(可选)" style="width: 260px" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="addTag">新增标签</el-button>
-        </el-form-item>
-      </el-form>
-      <el-table :data="categories" stripe>
-        <el-table-column prop="name" label="标签名" min-width="220" />
-        <el-table-column prop="description" label="说明" min-width="260" />
-        <el-table-column label="操作" width="240">
-          <template #default="scope">
-            <el-space>
-              <el-button size="small" @click="openEditTag(scope.row)">编辑</el-button>
-              <el-popconfirm title="删除后会保留链接，但清空它们的标签，确认？" @confirm="removeTag(scope.row.id)">
-                <template #reference>
-                  <el-button size="small" type="danger" plain>删除标签</el-button>
-                </template>
-              </el-popconfirm>
-            </el-space>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    <section class="right-panel">
+      <el-card v-for="group in groupedLinks" :key="group.tagName">
+        <template #header>
+          <div class="group-header">
+            <div class="card-title">{{ group.tagName }}</div>
+            <el-tag type="info" effect="plain">{{ group.items.length }} 条</el-tag>
+          </div>
+        </template>
 
-    <el-card v-for="group in groupedLinks" :key="group.tagName">
-      <template #header>
-        <div class="card-title">{{ group.tagName }}</div>
-      </template>
-      <el-table :data="group.items" stripe>
-        <el-table-column prop="title" label="标题" min-width="220" />
-        <el-table-column label="链接" min-width="280">
-          <template #default="scope">
-            <a :href="scope.row.url" target="_blank" rel="noreferrer">{{ scope.row.url }}</a>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="120">
-          <template #default="scope">
-            <el-select
-              :model-value="scope.row.status"
-              size="small"
-              style="width: 100px"
-              @change="(val) => patchLink(scope.row.id, { status: val })"
-            >
-              <el-option value="unread" label="未读" />
-              <el-option value="read" label="已读" />
-              <el-option value="ignored" label="忽略" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="标签" width="180">
-          <template #default="scope">
-            <el-select
-              :model-value="scope.row.category_id"
-              size="small"
-              style="width: 160px"
-              placeholder="选择标签"
-              @change="(val) => patchLink(scope.row.id, { category_id: val })"
-            >
-              <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="来源" width="100">
-          <template #default="scope">
-            <el-tag size="small" :type="scope.row.classification_source === 'manual' ? 'success' : 'info'">
-              {{ scope.row.classification_source === 'manual' ? '人工' : 'AI' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="320">
-          <template #default="scope">
-            <el-space>
-              <el-button
-                v-if="!scope.row.category_name || scope.row.category_name === '未分类' || scope.row.category_name === '未打标签'"
-                size="small"
-                type="primary"
-                plain
-                @click="reclassifyLink(scope.row.id)"
-              >
-                重新分类
-              </el-button>
+        <div class="link-card-list">
+          <article v-for="item in group.items" :key="item.id" class="link-card-item">
+            <div class="link-card-main">
+              <el-checkbox
+                :model-value="selectedLinkIds.includes(item.id)"
+                @change="(val) => toggleLinkSelected(item.id, val as boolean)"
+              />
+              <div class="link-content">
+                <div class="title-line">{{ item.title || '未命名链接' }}</div>
+                <a class="url-line" :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
+                <div class="meta-line">
+                  <el-tag size="small" :type="classificationSourceTagType(item.classification_source)">
+                    {{ classificationSourceLabel(item.classification_source) }}
+                  </el-tag>
+                  <el-select
+                    :model-value="item.status"
+                    size="small"
+                    style="width: 96px"
+                    @change="(val) => patchLink(item.id, { status: val })"
+                  >
+                    <el-option value="unread" label="未读" />
+                    <el-option value="read" label="已读" />
+                    <el-option value="ignored" label="忽略" />
+                  </el-select>
+                  <el-select
+                    :model-value="item.category_id"
+                    size="small"
+                    style="width: 140px"
+                    placeholder="标签"
+                    @change="(val) => patchLink(item.id, { category_id: val })"
+                  >
+                    <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+                  </el-select>
+                </div>
+              </div>
+            </div>
+
+            <div class="op-cell">
+              <el-button size="small" text type="primary" @click="reclassifyLink(item.id)">重分</el-button>
               <el-button
                 size="small"
-                :type="scope.row.is_archived ? 'warning' : 'info'"
-                plain
-                @click="toggleArchive(scope.row)"
+                text
+                :type="item.is_archived ? 'warning' : 'info'"
+                @click="toggleArchive(item)"
               >
-                {{ scope.row.is_archived ? '取消归档' : '归档' }}
+                {{ item.is_archived ? '取消归档' : '归档' }}
               </el-button>
-              <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(scope.row.id)">
+              <el-popconfirm title="永久删除该链接？该操作不可恢复" @confirm="deleteLink(item.id)">
                 <template #reference>
-                  <el-button size="small" type="danger">删除</el-button>
+                  <el-button size="small" text type="danger">删除</el-button>
                 </template>
               </el-popconfirm>
-            </el-space>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+            </div>
+          </article>
+        </div>
+      </el-card>
+    </section>
 
     <el-dialog v-model="tagDialogVisible" title="编辑标签" width="520px">
       <el-form label-width="90px">
@@ -155,7 +152,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 type LinkItem = {
@@ -184,6 +181,7 @@ const showArchived = ref(false)
 const newTag = ref({ name: '', description: '' })
 
 const tagDialogVisible = ref(false)
+const selectedLinkIds = ref<number[]>([])
 const editingTag = ref<{ id: number | null; name: string; description: string }>({
   id: null,
   name: '',
@@ -214,6 +212,24 @@ const load = async () => {
   const { data } = await api.get('/api/links')
   const filtered = (data as LinkItem[]).filter((i) => (showArchived.value ? true : !i.is_archived))
   links.value = filtered
+  selectedLinkIds.value = []
+}
+
+const classificationSourceLabel = (source: string) => {
+  if (source === 'manual') return '人工'
+  if (source === 'queued') return '排队中'
+  if (source === 'fallback_retrying') return '回退重试'
+  if (source === 'fallback_failed') return '回退失败'
+  if (source === 'ai') return 'AI'
+  return source || '未知'
+}
+
+const classificationSourceTagType = (source: string) => {
+  if (source === 'manual') return 'success'
+  if (source === 'queued') return 'warning'
+  if (source === 'fallback_retrying') return 'warning'
+  if (source === 'fallback_failed') return 'danger'
+  return 'info'
 }
 
 const groupedLinks = computed(() => {
@@ -252,8 +268,15 @@ const submitBatch = async () => {
 
 const patchLink = async (id: number, payload: Record<string, any>) => {
   await api.patch(`/api/links/${id}`, payload)
+  const target = links.value.find((item) => item.id === id)
+  if (target) {
+    Object.assign(target, payload)
+    if (typeof payload.category_id !== 'undefined') {
+      const category = categories.value.find((c) => c.id === payload.category_id)
+      target.category_name = category?.name || null
+    }
+  }
   ElMessage.success('已更新')
-  await load()
 }
 
 const toggleArchive = async (row: LinkItem) => {
@@ -269,6 +292,65 @@ const deleteLink = async (id: number) => {
 const reclassifyLink = async (id: number) => {
   await api.post(`/api/links/${id}/reclassify`)
   ElMessage.success('重新分类完成')
+  await loadCategories()
+  await load()
+}
+
+const toggleLinkSelected = (id: number, checked: boolean) => {
+  if (checked) {
+    if (!selectedLinkIds.value.includes(id)) {
+      selectedLinkIds.value = [...selectedLinkIds.value, id]
+    }
+    return
+  }
+
+  selectedLinkIds.value = selectedLinkIds.value.filter((linkId) => linkId !== id)
+}
+
+const batchReclassifyLinks = async () => {
+  if (!selectedLinkIds.value.length) {
+    ElMessage.warning('请先选择要重新 AI 分类的链接')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `将对 ${selectedLinkIds.value.length} 条链接执行重新 AI 分类，是否继续？`,
+      '批量重新 AI 分类',
+      {
+        type: 'warning',
+        confirmButtonText: '继续',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  const ids = [...selectedLinkIds.value]
+  const concurrency = 4
+  let successCount = 0
+  let failCount = 0
+
+  for (let i = 0; i < ids.length; i += concurrency) {
+    const chunk = ids.slice(i, i + concurrency)
+    const results = await Promise.allSettled(chunk.map((id) => api.post(`/api/links/${id}/reclassify`)))
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        successCount += 1
+      } else {
+        failCount += 1
+      }
+    }
+  }
+
+  if (failCount === 0) {
+    ElMessage.success(`批量重新分类完成：成功 ${successCount} 条`)
+  } else {
+    ElMessage.warning(`批量重新分类完成：成功 ${successCount} 条，失败 ${failCount} 条`)
+  }
+
   await loadCategories()
   await load()
 }
@@ -304,10 +386,42 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.links-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.left-panel,
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 .section-tip {
   margin: 0 0 12px;
   color: var(--mx-text-muted);
   font-size: 13px;
+}
+
+.tag-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tag-name {
+  color: var(--mx-text-strong);
+  font-weight: 600;
+}
+
+.tag-desc {
+  color: var(--mx-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 :deep(.el-form-item) {
@@ -316,5 +430,97 @@ onMounted(async () => {
 
 :deep(.el-table .cell) {
   line-height: 1.6;
+}
+
+
+.title-line {
+  font-weight: 600;
+  color: var(--mx-text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.url-line {
+  display: block;
+  margin-top: 2px;
+  color: var(--mx-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.link-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.link-card-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--mx-border);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.link-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.link-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.meta-line {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.op-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+:deep(.op-cell .el-button + .el-button) {
+  margin-left: 0;
+}
+
+@media (max-width: 1200px) {
+  .links-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .link-card-item {
+    flex-direction: column;
+  }
+
+  .op-cell {
+    width: 100%;
+  }
 }
 </style>
